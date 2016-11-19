@@ -3,11 +3,16 @@
 #include <v8.h>
 #include <libplatform/libplatform.h>
 #include <v8pp/context.hpp>
+#include <v8pp/class.hpp>
+#include <v8pp/module.hpp>
+
+#include <cryptokernel/crypto.h>
 
 /**
 * Program entry point
 *
 * @return 0 if the program completed successfully
+* @throw runtime_error if there was a problem executing the script
 */
 int main(int argc, char* argv[])
 {
@@ -21,11 +26,22 @@ int main(int argc, char* argv[])
 	{
         v8pp::context context;
 
-        const std::string source = "2 + 6";
+        const std::string source = "var cryptLib = new CK.Crypto(true); cryptLib.getPublicKey();";
 
         v8::Isolate* isolate = context.isolate();
-
         v8::HandleScope scope(isolate);
+
+        v8pp::class_<CryptoKernel::Crypto> cryptoClass(isolate);
+        cryptoClass.ctor<const bool>();
+        cryptoClass.set("getPublicKey", &CryptoKernel::Crypto::getPublicKey);
+        cryptoClass.set("getPrivateKey", &CryptoKernel::Crypto::getPrivateKey);
+
+        v8pp::module CK(isolate);
+
+        CK.set("Crypto", cryptoClass);
+
+        isolate->GetCurrentContext()->Global()->Set(v8::String::NewFromUtf8(isolate, "CK"), CK.new_instance());
+
         v8::TryCatch tryCatch;
         v8::Handle<v8::Value> result = context.run_script(source);
         if(tryCatch.HasCaught())
@@ -34,7 +50,7 @@ int main(int argc, char* argv[])
             throw std::runtime_error(msg);
         }
 
-        const int scriptResult = v8pp::from_v8<int>(isolate, result);
+        const std::string scriptResult = v8pp::from_v8<std::string>(isolate, result);
 
         std::cout << scriptResult;
 	}
