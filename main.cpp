@@ -1,4 +1,7 @@
 #include <iostream>
+#include <string>
+#include <thread>
+#include <chrono>
 
 #include <v8.h>
 #include <libplatform/libplatform.h>
@@ -7,6 +10,28 @@
 #include <v8pp/module.hpp>
 
 #include <cryptokernel/crypto.h>
+
+/**
+* Uses the address of a local variable to determine the stack top now.
+* Given a size, returns an address that is that far from the current
+* top of stack.
+*
+* @param size the size of the stack limit in bits
+* @return a pointer to the address of the bottom of the stack
+*/
+uint32_t* ComputeStackLimit(uint32_t size) {
+  uint32_t* answer = &size - (size / sizeof(size));
+  // If the size is very large and the stack is very near the bottom of
+  // memory then the calculation above may wrap around and give an address
+  // that is above the (downwards-growing) stack.  In that case we return
+  // a very low address.
+  if(answer > &size)
+  {
+      return reinterpret_cast<uint32_t*>(sizeof(size));
+  }
+
+  return answer;
+}
 
 /**
 * Program entry point
@@ -24,33 +49,42 @@ int main(int argc, char* argv[])
 
 	try
 	{
-        v8pp::context context;
+        const std::string source = "var cryptoLib = new CK.Crypto(true); cryptoLib.getPublicKey() + cryptoLib.getPrivateKey();";
 
-        const std::string source = "var cryptLib = new CK.Crypto(true); cryptLib.getPublicKey();";
+        v8::Isolate::CreateParams params;
+        params.constraints.set_stack_limit(ComputeStackLimit(20000));
+        params.constraints.set_max_executable_size(3);
 
-        v8::Isolate* isolate = context.isolate();
-        v8::HandleScope scope(isolate);
+        std::unique_ptr<v8::ArrayBuffer::Allocator> arrayBuffer(v8::ArrayBuffer::Allocator::NewDefaultAllocator());
+        params.array_buffer_allocator = arrayBuffer.get();
 
-        v8pp::class_<CryptoKernel::Crypto> cryptoClass(isolate);
+        v8::Isolate* isolate = v8::Isolate::New(params);
+        isolate->Enter();
+
+        v8pp::context context(isolate, arrayBuffer.get());
+        v8::HandleScope scope(context.isolate());
+
+        v8pp::class_<CryptoKernel::Crypto> cryptoClass(context.isolate());
         cryptoClass.ctor<const bool>();
         cryptoClass.set("getPublicKey", &CryptoKernel::Crypto::getPublicKey);
         cryptoClass.set("getPrivateKey", &CryptoKernel::Crypto::getPrivateKey);
 
-        v8pp::module CK(isolate);
+        v8pp::module CK(context.isolate());
 
         CK.set("Crypto", cryptoClass);
 
-        isolate->GetCurrentContext()->Global()->Set(v8::String::NewFromUtf8(isolate, "CK"), CK.new_instance());
+        context.isolate()->GetCurrentContext()->Global()->Set(v8::String::NewFromUtf8(context.isolate(), "CK"), CK.new_instance());
 
-        v8::TryCatch tryCatch;
+        v8::TryCatch tryCatch(context.isolate());
+
         v8::Handle<v8::Value> result = context.run_script(source);
         if(tryCatch.HasCaught())
         {
-            const std::string msg = v8pp::from_v8<std::string>(isolate, tryCatch.Exception()->ToString());
+            const std::string msg = v8pp::from_v8<std::string>(context.isolate(), tryCatch.Exception()->ToString());
             throw std::runtime_error(msg);
         }
 
-        const std::string scriptResult = v8pp::from_v8<std::string>(isolate, result);
+        const std::string scriptResult = v8pp::from_v8<std::string>(context.isolate(), result);
 
         std::cout << scriptResult;
 	}

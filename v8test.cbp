@@ -38,6 +38,8 @@
 			<Add option="-lv8" />
 			<Add option="-lv8_libplatform" />
 			<Add option="-lv8pp" />
+			<Add option="-lCryptoKernel" />
+			<Add option="-lcrypto" />
 			<Add option="-ldl" />
 		</Linker>
 		<Unit filename="main.cpp" />
